@@ -1,0 +1,6 @@
+@AskMyRig.Api_HostAddress = http://localhost:5124
+
+GET {{AskMyRig.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

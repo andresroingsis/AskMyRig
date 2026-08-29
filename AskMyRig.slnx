@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="AskMyRig.Api/AskMyRig.Api.csproj" Id="ea36d19b-587c-4c65-b7f1-f35643b516ec" />
+  <Project Path="AskMyRig.Core/AskMyRig.Core.csproj" Id="038efa11-980e-4084-bb6e-b3e461cf2c25" />
+  <Project Path="AskMyRig.Ingestion/AskMyRig.Ingestion.csproj" Id="540a6a82-c768-424a-ad84-a7f65e2f7219" />
+</Solution>
