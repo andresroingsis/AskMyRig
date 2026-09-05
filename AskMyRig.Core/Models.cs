@@ -1,4 +1,4 @@
-namespace AskMyRig.Ingestion;
+namespace AskMyRig.Core;
 
 /// <summary>
 /// A rectangular run of text found on a page, together with the font

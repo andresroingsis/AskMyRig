@@ -2,7 +2,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json.Serialization;
 
-namespace AskMyRig.Ingestion;
+namespace AskMyRig.Core;
 
 /// <summary>Ollama replied, but not with a vector. Carries its error text.</summary>
 public sealed class OllamaException(string message) : Exception(message);

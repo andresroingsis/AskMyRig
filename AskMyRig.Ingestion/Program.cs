@@ -1,6 +1,7 @@
-using System.Text.Json;
+using AskMyRig.Core;
 using Microsoft.Extensions.Configuration;
 using Microsoft.ML.Tokenizers;
+using System.Text.Json;
 
 namespace AskMyRig.Ingestion;
 

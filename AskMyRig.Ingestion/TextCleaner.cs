@@ -1,3 +1,4 @@
+using AskMyRig.Core;
 using System.Text.RegularExpressions;
 
 namespace AskMyRig.Ingestion;

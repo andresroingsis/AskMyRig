@@ -1,3 +1,5 @@
+using AskMyRig.Core;
+
 namespace AskMyRig.Ingestion;
 
 public static class SegmentBuilder

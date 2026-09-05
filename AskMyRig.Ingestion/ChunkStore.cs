@@ -1,8 +1,9 @@
+using AskMyRig.Core;
+using Dapper;
+using Microsoft.Data.SqlClient;
 using System.Data;
 using System.Globalization;
 using System.Text;
-using Dapper;
-using Microsoft.Data.SqlClient;
 
 namespace AskMyRig.Ingestion;
 

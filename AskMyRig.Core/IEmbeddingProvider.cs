@@ -1,4 +1,4 @@
-namespace AskMyRig.Ingestion;
+namespace AskMyRig.Core;
 
 /// <summary>
 /// Which role the text plays in a search.

@@ -1,6 +1,7 @@
+using AskMyRig.Core;
+using Microsoft.ML.Tokenizers;
 using System.Text;
 using System.Text.RegularExpressions;
-using Microsoft.ML.Tokenizers;
 
 namespace AskMyRig.Ingestion;
 
