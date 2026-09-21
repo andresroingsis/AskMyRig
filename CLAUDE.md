@@ -13,7 +13,8 @@ Update this section whenever a task lands or a decision is made.
 - Project 1, retrieval foundations: about 80% done (audited against the code and the live database, 21 Sep 2026)
   - Done: PdfPig extraction → boilerplate removal → heading-aware segmentation → token-budget chunking → Ollama embeddings → chunks and `VECTOR(768)` rows in SQL Server 2025 via Dapper. 8 manuals, 483 chunks, all 483 embedded.
   - Done: semantic search. `POST /search` returns the top-k chunks with manual, page range, heading, content and similarity, plus embed/search timings.
-  - Remaining, in order: move retrieval into Core behind `IRetriever` → LLM answering with citations → UI. Estimate 2–3 weekends.
+  - Done: retrieval lives in `AskMyRig.Core` behind `IRetriever`, implemented by `VectorRetriever`. Project 2's keyword and fused retrievers plug in at the one registration line in `Program.cs`.
+  - Remaining, in order: LLM answering with citations → UI. Estimate 2–3 weekends.
 - The handover listed the search endpoint as not started; it was already built. Everything else in the handover's remaining-work list still stands.
 - Next: Project 2 (eval set, recall@k and MRR, hybrid search, parameter-table fix).
 
@@ -76,7 +77,7 @@ The handover says "three manuals". That's out of date: the corpus is 8 documents
 - **Chunk** (`ChunkBuilder`): 600 tokens max, 100 tokens overlap, and a section boundary closes the chunk once it holds at least 120 tokens. No overlap is carried across a section boundary. Oversized segments split on sentence boundaries. `PageFrom`/`PageTo` are the min/max page of the segments in the chunk; the heading is prepended to the content unless it's already there.
 - **Embed** (`OllamaEmbeddingProvider`): batches of 8; a failed batch is retried one at a time so the offending chunk gets named. Task prefixes `search_document: ` and `search_query: ` are applied only when the model name contains "nomic". Input is sanitised — control characters, lone surrogates and private-use-area glyphs (Yamaha's symbol-font button icons) are stripped.
 - **Store** (`ChunkStore`): the vector is written as a JSON array string and `CAST(@Embedding AS VECTOR(768))`, with the parameter declared NVARCHAR(MAX) so Dapper doesn't truncate it at 4,000 chars. `EnsureDimensionsMatchAsync` checks the column's declared width against the provider before any rows are written.
-- **Search** (`ChunkSearcher`): embeds the question as `Query`, then an exact `TOP (@TopK) ... 1 - VECTOR_DISTANCE('cosine', ...) AS Similarity ORDER BY Similarity DESC` with an optional manual filter. No ANN index — an exact scan over 483 rows is both faster and more accurate at this size. Embed time and search time are measured separately.
+- **Retrieve** (`IRetriever` / `VectorRetriever`, both in Core): embeds the question as `Query`, then an exact `TOP (@TopK) ... 1 - VECTOR_DISTANCE('cosine', ...) AS Similarity ORDER BY Similarity DESC` with an optional manual filter. No ANN index — an exact scan over 483 rows is both faster and more accurate at this size. Hits come back sorted best-first, which is what reciprocal rank fusion will consume in Project 2. `RetrievalResult` carries a `StageTiming` per stage rather than fixed fields, because a keyword retriever has no embed step and a fused one has stages of its own. Measured on this machine: ~52 ms to embed, ~22 ms to scan once warm; the first query after startup costs about 1.2 s in connection and plan compilation.
 
 ## Schema
 
@@ -90,10 +91,8 @@ No `Schema.sql` exists in the repo, even though `ChunkStore`'s error messages te
 
 Carry these into the next pieces of work rather than rediscovering them.
 
-- **`Schema.sql` is missing.** The database exists only on this machine and can't be recreated from the repo.
-- **Retrieval is not behind an interface.** `ChunkSearcher` is a concrete class registered directly. Project 2 needs keyword and fused retrievers, Project 3 needs retrieval as a tool — both want `IRetriever`.
-- **Search code sits in the wrong project.** `ChunkSearcher.cs`, `SearchModels.cs` and `VectorLiteral.cs` live in `AskMyRig.Api/` but declare `namespace AskMyRig.Core`. They belong in `AskMyRig.Core`.
-- **The vector literal is duplicated.** `ChunkStore.ToVectorLiteral` is a private copy of `VectorLiteral.From`, whose own doc comment claims the two paths share it. Exactly the divergence that comment warns about.
+- **`Schema.sql` is missing.** The database exists only on this machine and can't be recreated from the repo. Deliberately not being added — noted so nobody trusts `ChunkStore`'s "run Schema.sql first" error message.
+- **Citations have no display title.** `Manuals.Name` is the PDF file stem, so a citation reads "psrsx920_sx720_en_om_b0, p. 90". Answering and the UI both need something human — a `Title` column or a mapping.
 - **Ingestion has hardcoded absolute paths** (`D:\Repos\AskMyRig\data`, `...\output`) and compile-time Ollama settings, while the API takes both from configuration. If they ever drift, chunks and queries get embedded by different models and retrieval quietly degrades.
 - **Full-Text Search is not installed.** `SELECT FULLTEXTSERVICEPROPERTY('IsFullTextInstalled')` returns 0, so Project 2's hybrid search needs the feature added through SQL Server setup first.
 - **No tests.** Chunking, prompt assembly and citation parsing are the deterministic parts the handover wants covered.

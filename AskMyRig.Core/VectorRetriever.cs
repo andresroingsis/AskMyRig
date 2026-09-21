@@ -6,15 +6,20 @@ using Microsoft.Data.SqlClient;
 namespace AskMyRig.Core;
 
 /// <summary>
-/// Semantic search over the ingested chunks.
+/// Semantic search over the ingested chunks: embed the question, then rank
+/// every chunk by cosine similarity to it.
 ///
 /// Two steps, timed separately on purpose. Embedding the question is a call out
 /// to the model; the SQL scan is local. When something feels slow you want to
 /// know which half is responsible.
 /// </summary>
-public sealed class ChunkSearcher(string connectionString, IEmbeddingProvider provider)
+public sealed class VectorRetriever(string connectionString, IEmbeddingProvider provider) : IRetriever
 {
-    public async Task<SearchResponse> SearchAsync(SearchRequest request, CancellationToken cancellationToken = default)
+    public string Name => "vector";
+
+    public async Task<RetrievalResult> RetrieveAsync(
+        SearchRequest request,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(request.Question))
         {
@@ -37,8 +42,9 @@ public sealed class ChunkSearcher(string connectionString, IEmbeddingProvider pr
 
         var searchWatch = Stopwatch.StartNew();
 
-        // No vector index, so this is an exact scan over all 483 rows. At this
-        // size that is both faster and more accurate than approximating.
+        // No vector index, so this is an exact scan over every row - 483 of them
+        // in the current corpus. At this size that is both faster and more
+        // accurate than approximating.
         var sql = $"""
             SELECT TOP (@TopK)
                    c.Id,
@@ -69,11 +75,11 @@ public sealed class ChunkSearcher(string connectionString, IEmbeddingProvider pr
 
         searchWatch.Stop();
 
-        return new SearchResponse(
-            request.Question,
-            hits.Count,
-            embedWatch.ElapsedMilliseconds,
-            searchWatch.ElapsedMilliseconds,
-            hits);
+        return new RetrievalResult(
+            hits,
+            [
+                new StageTiming("embed", embedWatch.ElapsedMilliseconds),
+                new StageTiming("search", searchWatch.ElapsedMilliseconds)
+            ]);
     }
 }
