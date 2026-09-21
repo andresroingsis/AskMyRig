@@ -2,41 +2,11 @@ using AskMyRig.Core;
 using Dapper;
 using Microsoft.Data.SqlClient;
 using System.Data;
-using System.Globalization;
-using System.Text;
 
 namespace AskMyRig.Ingestion;
 
 public sealed class ChunkStore(string connectionString, int dimensions)
 {
-    /// <summary>
-    /// Formats a vector the way SQL Server expects it.
-    ///
-    /// The VECTOR type is stored in an optimised binary format but is written
-    /// and read as a JSON array, so we hand it a string and let CAST convert.
-    /// InvariantCulture is essential - on a machine with a comma decimal
-    /// separator the default formatting would emit "[0,13,-0,04]" and SQL
-    /// Server would reject it with an unhelpful error.
-    /// </summary>
-    private static string ToVectorLiteral(float[] vector)
-    {
-        var builder = new StringBuilder(vector.Length * 12);
-        builder.Append('[');
-
-        for (var i = 0; i < vector.Length; i++)
-        {
-            if (i > 0)
-            {
-                builder.Append(',');
-            }
-
-            builder.Append(vector[i].ToString("R", CultureInfo.InvariantCulture));
-        }
-
-        builder.Append(']');
-        return builder.ToString();
-    }
-
     public async Task<int> UpsertManualAsync(string name, int pageCount)
     {
         await using var connection = new SqlConnection(connectionString);
@@ -124,7 +94,7 @@ public sealed class ChunkStore(string connectionString, int dimensions)
             // size: -1 means NVARCHAR(MAX). The literal runs to several thousand
             // characters; without this Dapper caps it at 4,000 and the CAST
             // fails on a truncated array.
-            parameters.Add("Embedding", ToVectorLiteral(vectors[i]), DbType.String, size: -1);
+            parameters.Add("Embedding", VectorLiteral.From(vectors[i]), DbType.String, size: -1);
 
             await connection.ExecuteAsync(sql, parameters, transaction);
         }

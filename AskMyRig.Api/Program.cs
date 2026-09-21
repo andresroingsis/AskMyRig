@@ -14,8 +14,10 @@ var connectionString = builder.Configuration["Sql:ConnectionString"]
 builder.Services.AddSingleton<IEmbeddingProvider>(
     _ => new OllamaEmbeddingProvider(ollamaUrl, ollamaModel, dimensions));
 
-builder.Services.AddSingleton(sp =>
-    new ChunkSearcher(connectionString, sp.GetRequiredService<IEmbeddingProvider>()));
+// Registered as IRetriever, not as the concrete class. Project 2 swaps in a
+// keyword retriever and a fused one; only this line should have to change.
+builder.Services.AddSingleton<IRetriever>(sp =>
+    new VectorRetriever(connectionString, sp.GetRequiredService<IEmbeddingProvider>()));
 
 var app = builder.Build();
 
@@ -37,7 +39,7 @@ app.MapGet("/health", (IEmbeddingProvider provider) => Results.Ok(new
 
 app.MapPost("/search", async (
     SearchRequest request,
-    ChunkSearcher searcher,
+    IRetriever retriever,
     CancellationToken cancellationToken) =>
 {
     if (string.IsNullOrWhiteSpace(request.Question))
@@ -47,7 +49,14 @@ app.MapPost("/search", async (
 
     try
     {
-        return Results.Ok(await searcher.SearchAsync(request, cancellationToken));
+        var result = await retriever.RetrieveAsync(request, cancellationToken);
+
+        return Results.Ok(new SearchResponse(
+            request.Question,
+            result.Hits.Count,
+            result.Ms("embed"),
+            result.Ms("search"),
+            result.Hits));
     }
     catch (OllamaException ex)
     {
