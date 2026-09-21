@@ -14,7 +14,8 @@ Update this section whenever a task lands or a decision is made.
   - Done: PdfPig extraction → boilerplate removal → heading-aware segmentation → token-budget chunking → Ollama embeddings → chunks and `VECTOR(768)` rows in SQL Server 2025 via Dapper. 8 manuals, 483 chunks, all 483 embedded.
   - Done: semantic search. `POST /search` returns the top-k chunks with manual, page range, heading, content and similarity, plus embed/search timings.
   - Done: retrieval lives in `AskMyRig.Core` behind `IRetriever`, implemented by `VectorRetriever`. Project 2's keyword and fused retrievers plug in at the one registration line in `Program.cs`.
-  - Remaining, in order: LLM answering with citations → UI. Estimate 2–3 weekends.
+  - Done: grounded answering. `POST /ask` → `RigAnswerer` retrieves, drops hits below 0.55 similarity, builds a numbered-source prompt, calls `IChatClient` (llama3.2 via OllamaSharp) at temperature 0.1, and returns the answer with citations and per-stage timings. Verified end to end against the real corpus.
+  - Remaining: server-side citation validation (see Known gaps), then the UI. Estimate 1–2 weekends.
 - The handover listed the search endpoint as not started; it was already built. Everything else in the handover's remaining-work list still stands.
 - Next: Project 2 (eval set, recall@k and MRR, hybrid search, parameter-table fix).
 
@@ -37,7 +38,7 @@ There is no test project yet.
 ## Local prerequisites
 
 - **SQL Server 2025** (17.0.1000.7 RTM), instance `localhost\MSSQLSERVER01`, database `AskMyRig`, Windows auth.
-- **Ollama** at `http://localhost:11434` with `nomic-embed-text` pulled (`ollama pull nomic-embed-text`).
+- **Ollama** at `http://localhost:11434` with two models: `nomic-embed-text` for embeddings and `llama3.2` for generation (`ollama pull nomic-embed-text`, `ollama pull llama3.2`).
 - **.NET 10 SDK** (currently 10.0.300-preview).
 - Config: the API reads `Sql:ConnectionString` and `Ollama:Url|Model|Dimensions` from `AskMyRig.Api/appsettings.json`. Ingestion reads user secrets and environment variables only — its Ollama settings and its data/output paths are compile-time constants in `AskMyRig.Ingestion/Program.cs`. See Known gaps.
 - The API calls `EnsureReadyAsync()` during startup, so it will not boot unless Ollama is running and the model returns 768-dimension vectors.
@@ -65,6 +66,7 @@ The handover says "three manuals". That's out of date: the corpus is 8 documents
 - PdfPig 0.1.16 for PDF text extraction, with Docstrum block detection and reading-order detection
 - SQL Server 2025 native `VECTOR(768)`, Dapper 2.1.79, Microsoft.Data.SqlClient 7.0.2
 - Embeddings: Ollama, `nomic-embed-text`, 768 dimensions
+- Generation: `Microsoft.Extensions.AI.Abstractions` 10.9.0 (`IChatClient`) in Core, OllamaSharp 5.4.30 in the API, `llama3.2` (3B). Core never names a provider, so swapping to a hosted API is one registration in `Program.cs`.
 - Token counting: Microsoft.ML.Tokenizers, cl100k_base (`text-embedding-3-small` vocabulary) — a size estimate for chunking only, not nomic's tokenizer
 - Front end: small React or Blazor app (undecided)
 - Tests: xUnit, Moq (no test project yet)
@@ -79,6 +81,8 @@ The handover says "three manuals". That's out of date: the corpus is 8 documents
 - **Store** (`ChunkStore`): the vector is written as a JSON array string and `CAST(@Embedding AS VECTOR(768))`, with the parameter declared NVARCHAR(MAX) so Dapper doesn't truncate it at 4,000 chars. `EnsureDimensionsMatchAsync` checks the column's declared width against the provider before any rows are written.
 - **Retrieve** (`IRetriever` / `VectorRetriever`, both in Core): embeds the question as `Query`, then an exact `TOP (@TopK) ... 1 - VECTOR_DISTANCE('cosine', ...) AS Similarity ORDER BY Similarity DESC` with an optional manual filter. No ANN index — an exact scan over 483 rows is both faster and more accurate at this size. Hits come back sorted best-first, which is what reciprocal rank fusion will consume in Project 2. `RetrievalResult` carries a `StageTiming` per stage rather than fixed fields, because a keyword retriever has no embed step and a fused one has stages of its own. Measured on this machine: ~52 ms to embed, ~22 ms to scan once warm; the first query after startup costs about 1.2 s in connection and plan compilation.
 
+- **Answer** (`RigAnswerer`): drops hits below 0.55 similarity and returns an honest "not found" if none survive; otherwise builds a two-message prompt — a fixed system prompt carrying the grounding rules, and a user message of `[Source N]` blocks (manual, pages, section heading, chunk text) followed by the question. Temperature 0.1, 600 output tokens. The `[Source N]` numbering is the 1-based index into the returned `Citations`, so the UI can resolve a marker to a card. Measured: ~40–90 s to generate on this machine, which dwarfs the ~50 ms embed and ~20 ms search.
+
 ## Schema
 
 No `Schema.sql` exists in the repo, even though `ChunkStore`'s error messages tell you to run it. This is what the live database actually contains:
@@ -92,6 +96,9 @@ No `Schema.sql` exists in the repo, even though `ChunkStore`'s error messages te
 Carry these into the next pieces of work rather than rediscovering them.
 
 - **`Schema.sql` is missing.** The database exists only on this machine and can't be recreated from the repo. Deliberately not being added — noted so nobody trusts `ChunkStore`'s "run Schema.sql first" error message.
+- **Stored headings are digit-mangled.** `SegmentBuilder` assigns `currentHeading = TextCleaner.Normalise(block.Text)`, but `Normalise` replaces every digit run with `#` — it exists for matching boilerplate, not for display. 46 chunks carry headings like `# [Hi-Z] switches (channel #-#)` and `... (PSR-SX#)`. Because `ChunkBuilder` prepends the heading to the chunk content, the damage is in the embedded text too, so fixing it means re-running `parse` and `ingest`.
+- **No server-side citation validation.** The Answering rules require parsing the `[n]` markers, dropping any that don't map to a retrieved chunk, and treating an answer with no valid citation as "not found". `RigAnswerer` currently returns every retrieved hit as a citation without checking which were actually cited. llama3.2 also writes `[Source 1, p. 89]` rather than plain `[Source 1]`, so the parser needs to tolerate that.
+- **The 0.55 similarity floor sits in the noise.** "What is the capital of France?" returned two blank MEMO pages at 0.561 and 0.559, so `AnswerFromContext` came back true for an out-of-scope question. The model declined correctly, but leaked the unfilled template — "check [Source 1] around page [X]". Don't tune the number by hand; this is what the Project 2 eval set is for.
 - **Citations have no display title.** `Manuals.Name` is the PDF file stem, so a citation reads "psrsx920_sx720_en_om_b0, p. 90". Answering and the UI both need something human — a `Title` column or a mapping.
 - **Ingestion has hardcoded absolute paths** (`D:\Repos\AskMyRig\data`, `...\output`) and compile-time Ollama settings, while the API takes both from configuration. If they ever drift, chunks and queries get embedded by different models and retrieval quietly degrades.
 - **Full-Text Search is not installed.** `SELECT FULLTEXTSERVICEPROPERTY('IsFullTextInstalled')` returns 0, so Project 2's hybrid search needs the feature added through SQL Server setup first.

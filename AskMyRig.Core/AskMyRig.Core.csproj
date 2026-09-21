@@ -12,6 +12,9 @@
          runtime - without it, CreateForModel throws. -->
 		<PackageReference Include="Dapper" Version="2.1.79" />
 		<PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.2" />
+		<!-- IChatClient only. The concrete provider is chosen in the host, so
+         Core stays independent of where the language model runs. -->
+		<PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="10.9.0" />
 	</ItemGroup>
 
 </Project>

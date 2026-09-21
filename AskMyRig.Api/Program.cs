@@ -1,10 +1,16 @@
 using AskMyRig.Core;
+using Microsoft.Extensions.AI;
+using OllamaSharp;
 
 var builder = WebApplication.CreateBuilder(args);
 
 var ollamaUrl = builder.Configuration["Ollama:Url"] ?? "http://localhost:11434";
 var ollamaModel = builder.Configuration["Ollama:Model"] ?? "nomic-embed-text";
 var dimensions = builder.Configuration.GetValue("Ollama:Dimensions", 768);
+
+// Separate from the embedding model: one turns text into vectors, the other
+// writes the answer. They are different models and can be swapped independently.
+var chatModel = builder.Configuration["Ollama:ChatModel"] ?? "llama3.2";
 
 var connectionString = builder.Configuration["Sql:ConnectionString"]
     ?? throw new InvalidOperationException("Sql:ConnectionString is not configured.");
@@ -18,6 +24,15 @@ builder.Services.AddSingleton<IEmbeddingProvider>(
 // keyword retriever and a fused one; only this line should have to change.
 builder.Services.AddSingleton<IRetriever>(sp =>
     new VectorRetriever(connectionString, sp.GetRequiredService<IEmbeddingProvider>()));
+
+// OllamaApiClient implements IChatClient, so RigAnswerer never learns which
+// provider it got. Pointing this at Azure OpenAI or Anthropic is one line.
+builder.Services.AddSingleton<IChatClient>(
+    _ => new OllamaApiClient(new Uri(ollamaUrl), chatModel));
+
+builder.Services.AddSingleton(sp => new RigAnswerer(
+    sp.GetRequiredService<IRetriever>(),
+    sp.GetRequiredService<IChatClient>()));
 
 var app = builder.Build();
 
@@ -61,6 +76,29 @@ app.MapPost("/search", async (
     catch (OllamaException ex)
     {
         // 503 rather than 500: the API is fine, its dependency is not.
+        return Results.Problem(
+            title: "Embedding model unavailable",
+            detail: ex.Message,
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
+
+app.MapPost("/ask", async (
+    AskRequest request,
+    RigAnswerer answerer,
+    CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Question))
+    {
+        return Results.BadRequest(new { error = "Question is required." });
+    }
+
+    try
+    {
+        return Results.Ok(await answerer.AskAsync(request, cancellationToken));
+    }
+    catch (OllamaException ex)
+    {
         return Results.Problem(
             title: "Embedding model unavailable",
             detail: ex.Message,
